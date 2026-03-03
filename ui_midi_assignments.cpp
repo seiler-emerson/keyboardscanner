@@ -66,7 +66,10 @@ static constexpr int EEPROM_BYTES_POTS = 0;
 #ifdef ENABLE_MIDI_ASSIGN_BUTTONS
 static MidiButtonMapping g_btnMap[BUTTONS_ASSIGN_NUMBER];
 static bool g_toggleState[BUTTONS_ASSIGN_NUMBER];
-static bool g_lastPressedBtn[BUTTONS_ASSIGN_NUMBER];
+
+static volatile bool g_buttonEventFlags[BUTTONS_ASSIGN_NUMBER];
+static volatile uint8_t g_lastPortJ;
+static volatile uint8_t g_lastPortH;
 #endif
 
 //  State: Pots
@@ -161,29 +164,52 @@ static void loadFromEeprom()
 #endif
 }
 
+ISR(PCINT1_vect)
+{
+    uint8_t current = PINJ;
+    uint8_t changed = current ^ g_lastPortJ;
+    g_lastPortJ = current;
+
+    if (changed & (1 << 1)) g_buttonEventFlags[0] = true; // PJ1 → 14
+    if (changed & (1 << 0)) g_buttonEventFlags[1] = true; // PJ0 → 15
+}
+
+ISR(PCINT2_vect)
+{
+    uint8_t current = PINH;
+    uint8_t changed = current ^ g_lastPortH;
+    g_lastPortH = current;
+
+    if (changed & (1 << 0)) g_buttonEventFlags[3] = true; // PH0 → 17
+    if (changed & (1 << 1)) g_buttonEventFlags[2] = true; // PH1 → 16
+}
+
 // Button logic
 #ifdef ENABLE_MIDI_ASSIGN_BUTTONS
 static void handleButton(uint8_t idx)
 {
-    bool pressed = (digitalRead(MIDI_BUTTONS_PINS[idx]) == LOW);
+    if (!g_buttonEventFlags[idx])
+        return;
 
-    bool wasPressed = g_lastPressedBtn[idx];
-    g_lastPressedBtn[idx] = pressed;
+    noInterrupts();
+    g_buttonEventFlags[idx] = false;
+    interrupts();
+
+    bool pressed = (digitalRead(MIDI_BUTTONS_PINS[idx]) == LOW);
 
     uint8_t ch = clampU8(g_btnMap[idx].channel, 1, 16);
     uint8_t status = 0xB0 | ((ch - 1) & 0x0F);
 
     if (g_btnMap[idx].mode == MIDI_BTN_MODE_TOGGLE) {
-        if (pressed && !wasPressed) {
+
+        if (pressed) {
             g_toggleState[idx] = !g_toggleState[idx];
-            uint8_t value = g_toggleState[idx] ? 127 : 0;
-            sendMidiEvent(status, g_btnMap[idx].cc, value);
+            sendMidiEvent(status, g_btnMap[idx].cc, g_toggleState[idx] ? 127 : 0);
         }
+
     } else {
-        if (pressed != wasPressed) {
-            uint8_t value = pressed ? 127 : 0;
-            sendMidiEvent(status, g_btnMap[idx].cc, value);
-        }
+
+        sendMidiEvent(status, g_btnMap[idx].cc, pressed ? 127 : 0);
     }
 }
 #endif
@@ -233,15 +259,26 @@ static void readPots()
 void initMidiAssignments()
 {
 #ifdef ENABLE_MIDI_ASSIGN_BUTTONS
-    for (int i = 0; i < BUTTONS_ASSIGN_NUMBER; i++) {
+    for (uint8_t i = 0; i < BUTTONS_ASSIGN_NUMBER; i++) {
+
         pinMode(MIDI_BUTTONS_PINS[i], INPUT_PULLUP);
+
         g_btnMap[i].channel = 1;
-        g_btnMap[i].cc = (uint8_t)(20 + i); // CC = 20 + index
+        g_btnMap[i].cc = 20 + i;
         g_btnMap[i].mode = MIDI_BTN_MODE_TOGGLE;
 
         g_toggleState[i] = false;
-        g_lastPressedBtn[i] = false;
+        g_buttonEventFlags[i] = false;
     }
+
+PCICR |= (1 << PCIE1);
+PCMSK1 |= (1 << PCINT9) | (1 << PCINT10);   // PJ0 (15) e PJ1 (14)
+
+PCICR |= (1 << PCIE2);
+PCMSK2 |= (1 << PCINT16) | (1 << PCINT17);  // PH0 (17) e PH1 (16)
+
+g_lastPortJ = PINJ;
+g_lastPortH = PINH;
 #endif
 
 #ifdef ENABLE_MIDI_ASSIGN_POTS

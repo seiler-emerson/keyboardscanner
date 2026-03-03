@@ -24,9 +24,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #ifdef ENABLE_UI
 
 #if defined(UI_USE_OLED_128x64)
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <Wire.h>
+#include <Adafruit_GFX.h>               // install the library Adafruit GFX Library by Adafruit
+#include <Adafruit_SSD1306.h>           // install the library Adafruit SSD1306 by Adafruit
+#include <Wire.h>                       // Wire.h is the standard Arduino I2C library (already included in the core) used by the SSD1306 to communicate via SDA/SCL, without the need for extra installation.
 static Adafruit_SSD1306 g_display(128, 64, &Wire, UI_OLED_RESET_PIN);
 #endif
 
